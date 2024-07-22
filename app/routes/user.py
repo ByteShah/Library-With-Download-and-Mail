@@ -47,7 +47,6 @@ def login_user():
 
     user = User.query.filter_by(email=data['email']).first()
     if not user or not check_password_hash(user.password_hash, data['password']):
-        breakpoint()
         return jsonify({"error": "Invalid email or password"}), 401
 
     access_token = create_access_token(identity=user.id)
