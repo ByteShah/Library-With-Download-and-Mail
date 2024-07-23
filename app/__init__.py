@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_mail import Mail
 from flask_migrate import Migrate
@@ -38,5 +38,13 @@ def create_app():
     app.register_blueprint(book_search_bp, url_prefix='/books')
 
     CORS(app)
+    
+    DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), 'downloads')
+    if not os.path.exists(DOWNLOAD_DIR):
+        os.makedirs(DOWNLOAD_DIR)
+    
+    @app.route('/downloads/<filename>')
+    def download_file(filename):
+        return send_from_directory(DOWNLOAD_DIR, filename)
     
     return app

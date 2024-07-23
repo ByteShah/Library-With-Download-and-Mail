@@ -15,11 +15,6 @@ DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), 'downloads')
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
 
-def clean_book_name(book_name):
-    book_name = re.sub(r'\d+', '', book_name)
-    book_name = book_name.replace(',', '').strip()
-    return book_name
-
 def clean_pages(pages):
     return re.sub(r'\D', '', pages)
 
@@ -32,8 +27,16 @@ def get_book_cover_image(detail_page_url):
         return img_tag['src']
     return None
 
-def search_book(query):
-    search_url = f"http://libgen.is/search.php?req={query}&open=0&res=25&view=simple&phrase=1&column=def"
+def extract_book_name(td_tag):
+    a_tags = td_tag.find_all('a')
+    for a_tag in a_tags:
+        if 'book/index.php' in a_tag['href']:
+            book_name = a_tag.contents[0].strip()
+            return book_name
+    return None
+
+def search_book(query, page=1, results_per_page=25):
+    search_url = f"http://libgen.is/search.php?req={query}&open=0&res={results_per_page}&view=simple&phrase=1&column=def&page={page}"
     response = requests.get(search_url)
     soup = BeautifulSoup(response.content, 'html.parser')
     
@@ -45,7 +48,8 @@ def search_book(query):
     books = []
     for row in rows:
         cols = row.find_all('td')
-        title = cols[2].get_text().strip()
+        title_html = cols[2]
+        title = extract_book_name(title_html)
         author = cols[1].get_text().strip()
         publisher = cols[3].get_text().strip()
         year = cols[4].get_text().strip()
@@ -59,14 +63,14 @@ def search_book(query):
             cover_image_url = get_book_cover_image(detail_page_url)
             book_details = {
                 'title': title,
-                'clean_title': clean_book_name(title),
+                'clean_title': title,
                 'author': author,
                 'publisher': publisher,
                 'year': year,
                 'pages': pages,
                 'language': language,
                 'size': size,
-                'cover_image_url': "http://libgen.is/" + cover_image_url if cover_image_url else None,
+                'cover_image_url': "http://library.lol" + cover_image_url if cover_image_url else None,
                 'download_page_url': download_page_url
             }
             books.append(book_details)
@@ -89,7 +93,6 @@ def download_book(book_name, download_page_url):
     book_response = requests.get(download_link, stream=True)
     total_size = int(book_response.headers.get('content-length', 0))
     
-    book_name = clean_book_name(book_name)
     book_title = f"{book_name}.pdf"
     book_path = os.path.join(DOWNLOAD_DIR, book_title)
     
@@ -121,18 +124,21 @@ def send_email(book_path, recipient_email):
     mail.send(msg)
 
 @book_search_bp.route('/search', methods=['POST', 'GET'])
-@jwt_required()
 def search():
     if request.method == 'POST' and request.is_json:
         data = request.get_json()
         query = data.get('query')
+        page = data.get('page', 1)
+        results_per_page = data.get('results_per_page', 25)
     else:
         query = request.args.get('query')
+        page = int(request.args.get('page', 1))
+        results_per_page = int(request.args.get('results_per_page', 25))
         
     if not query:
         return jsonify({"error": "Query parameter is required"}), 400
     
-    books = search_book(query)
+    books = search_book(query, page, results_per_page)
     if not books:
         return jsonify({"error": "No PDF books found."}), 404
     
