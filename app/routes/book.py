@@ -27,6 +27,11 @@ def get_book_cover_image(detail_page_url):
         return img_tag['src']
     return None
 
+def get_google_book_cover_image(image_links):
+    if image_links and 'thumbnail' in image_links:
+        return image_links['thumbnail']
+    return None
+
 def extract_book_name(td_tag):
     a_tags = td_tag.find_all('a')
     for a_tag in a_tags:
@@ -34,6 +39,44 @@ def extract_book_name(td_tag):
             book_name = a_tag.contents[0].strip()
             return book_name
     return None
+
+def search_book_google(query, start_index=0, max_results=10):
+    google_books_url = f"https://www.googleapis.com/books/v1/volumes?q={query}&startIndex={start_index}&maxResults={max_results}"
+    response = requests.get(google_books_url)
+    books_data = response.json()
+
+    books = []
+    if 'items' in books_data:
+        for item in books_data['items']:
+            volume_info = item.get('volumeInfo', {})
+            title = volume_info.get('title', 'N/A')
+            authors = ", ".join(volume_info.get('authors', ['N/A']))
+            publisher = volume_info.get('publisher', 'N/A')
+            published_date = volume_info.get('publishedDate', 'N/A')
+            page_count = volume_info.get('pageCount', 'N/A')
+            language = volume_info.get('language', 'N/A')
+            cover_image_url = get_google_book_cover_image(volume_info.get('imageLinks', {}))
+            description = volume_info.get('description', 'No description available.')
+            industry_identifiers = volume_info.get('industryIdentifiers', [])
+            isbn_10 = next((id['identifier'] for id in industry_identifiers if id['type'] == 'ISBN_10'), 'N/A')
+            isbn_13 = next((id['identifier'] for id in industry_identifiers if id['type'] == 'ISBN_13'), 'N/A')
+
+            book_details = {
+                'title': title,
+                'clean_title': title,
+                'author': authors,
+                'publisher': publisher,
+                'year': published_date,
+                'pages': page_count,
+                'language': language,
+                'cover_image_url': cover_image_url,
+                'info_link': volume_info.get('infoLink', 'N/A'),
+                'description': description,
+                'isbn_10': isbn_10,
+                'isbn_13': isbn_13
+            }
+            books.append(book_details)
+    return books
 
 def search_book(query, page=1, results_per_page=25):
     search_url = f"http://libgen.is/search.php?req={query}&open=0&res={results_per_page}&view=simple&phrase=1&column=def&page={page}"
@@ -61,6 +104,25 @@ def search_book(query, page=1, results_per_page=25):
             detail_page_url = "http://libgen.is/" + cols[2].find('a')['href']
             download_page_url = cols[9].find('a')['href']
             cover_image_url = get_book_cover_image(detail_page_url)
+
+            isbn_10 = 'N/A'
+            isbn_13 = 'N/A'
+            description = 'No description available.'
+
+            # Attempt to get ISBN and description from detail page
+            detail_response = requests.get(detail_page_url)
+            detail_soup = BeautifulSoup(detail_response.content, 'html.parser')
+            for div in detail_soup.find_all('div', class_='book-info'):
+                if 'ISBN' in div.text:
+                    isbn_text = div.text.split('ISBN')[1].strip().split()[0]
+                    if len(isbn_text) == 10:
+                        isbn_10 = isbn_text
+                    elif len(isbn_text) == 13:
+                        isbn_13 = isbn_text
+
+                if 'Description' in div.text:
+                    description = div.text.split('Description')[1].strip()
+
             book_details = {
                 'title': title,
                 'clean_title': title,
@@ -71,7 +133,10 @@ def search_book(query, page=1, results_per_page=25):
                 'language': language,
                 'size': size,
                 'cover_image_url': "http://library.lol" + cover_image_url if cover_image_url else None,
-                'download_page_url': download_page_url
+                'download_page_url': download_page_url,
+                'description': description,
+                'isbn_10': isbn_10,
+                'isbn_13': isbn_13
             }
             books.append(book_details)
     return books
@@ -162,3 +227,25 @@ def download():
     send_email(book_file, recipient_email)
     
     return send_file(book_file, as_attachment=True)
+
+@book_search_bp.route('/google-search', methods=['POST', 'GET'])
+def googleSearch():
+    if request.method == 'POST' and request.is_json:
+        data = request.get_json()
+        query = data.get('query')
+        page = data.get('page', 1)
+        results_per_page = data.get('results_per_page', 25)
+    else:
+        query = request.args.get('query')
+        page = int(request.args.get('page', 1))
+        results_per_page = int(request.args.get('results_per_page', 25))
+  
+    if not query:
+        return jsonify({"error": "Query parameter is required"}), 400
+
+    start_index = (page - 1) * results_per_page
+    books = search_book_google(query, start_index, results_per_page)
+    if not books:
+        return jsonify({"error": "No books found."}), 404
+
+    return jsonify({"books": books}), 200
